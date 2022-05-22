@@ -5,7 +5,6 @@ import * as locale from './localization';
 import prism from 'prism-media';
 import { processVCAudio, VC_SAMPLE_RATE } from './audio';
 import { transcriptor } from './transcription';
-import axios from 'axios';
 import { translate } from './translation';
 
 interface Command{
