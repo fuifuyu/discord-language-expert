@@ -34,27 +34,18 @@ export function setTarget(lang:Language){
     tarLanguage = lang;
 }
 
-export function speaking(){
-    switch(srcLanguage){
-        case chinese:
-            return '正在説話中';
-        case english:
-            return 'is speaking';
-    }
-}
-
 export function transcript(username:string|undefined, transcription: string){
     if(srcLanguage === chinese){
-        transcription += `\n> __${username}__: ${pinyin(transcription)}`
+        transcription += `\n__${username}__: ${pinyin(transcription)}`
     }
-    return `> __${username}__: ${transcription}`; 
+    return `__${username}__: ${transcription}`; 
 }
 
 export function translate(username:string|undefined, translation: string){
     if(tarLanguage === chinese){
-        translation += `\n__${username}__: ${pinyin(translation)}`
+        translation += `> \n__${username}__: ${pinyin(translation)}`
     }
-    return `__${username}__: ${translation}`;
+    return `> __${username}__: ${translation}`;
 }
 
 export function response(username:string|undefined, transcription:string, translation:string){
