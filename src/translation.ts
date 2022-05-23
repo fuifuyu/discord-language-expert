@@ -5,10 +5,15 @@ import * as locale from './localization';
 const translator = new deepl.Translator(process.env.DEEPL_TOKEN!);
 export async function translate(text:string){
     try{
+        let src = locale.srcLanguage.code;
+        let tar = locale.tarLanguage.code;
+        if(locale.tarLanguage.code==='en'){
+            tar = 'en-us';
+        }
         const result = await translator.translateText(
             text,
-            locale.srcLanguage.val as SourceLanguageCode,
-            locale.tarLanguage.val as TargetLanguageCode
+            src as SourceLanguageCode,
+            tar as TargetLanguageCode
         );
         return result.text;
     } catch(e){

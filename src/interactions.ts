@@ -1,10 +1,10 @@
 import { SlashCommandBooleanOption, SlashCommandIntegerOption, SlashCommandStringOption, SlashCommandUserOption } from '@discordjs/builders';
 import { DiscordGatewayAdapterCreator, EndBehaviorType, getVoiceConnection, joinVoiceChannel } from '@discordjs/voice';
-import { CommandInteraction, GuildMember, MessageActionRow, MessageSelectMenu, TextChannel, ThreadChannel} from 'discord.js'
+import { CommandInteraction, Guild, GuildMember, MessageActionRow, MessageSelectMenu, TextChannel, ThreadChannel} from 'discord.js'
 import * as locale from './localization';
 import prism from 'prism-media';
 import { processVCAudio, VC_SAMPLE_RATE } from './audio';
-import { transcriptor } from './transcription';
+import { partial, transcriptor } from './transcription';
 import { translate } from './translation';
 
 interface Command{
@@ -19,16 +19,16 @@ let Commands = new Map<string,Command>([
         callback: join,
         option: [
             locale.languageList.reduce(
-                (prev,cur)=> prev.addChoices({name:cur.label,value:cur.val}
+                (prev,cur)=> prev.addChoices({name:cur.label,value:cur.code}
             ),
             new SlashCommandStringOption()
-                .setName('language')
+                .setName('from')
                 .setDescription('What language do you need help with?')),
             locale.languageList.reduce(
-                (prev,cur)=> prev.addChoices({name:cur.label,value:cur.val}
+                (prev,cur)=> prev.addChoices({name:cur.label,value:cur.code}
             ),
             new SlashCommandStringOption()
-                .setName('translation')
+                .setName('to')
                 .setDescription('What language are you familiar with?'))
         ]
     }],
@@ -41,16 +41,16 @@ let Commands = new Map<string,Command>([
         callback: changeLang,
         option: [
             locale.languageList.reduce(
-                (prev,cur)=> prev.addChoices({name:cur.label,value:cur.val}
+                (prev,cur)=> prev.addChoices({name:cur.label,value:cur.code}
             ),
             new SlashCommandStringOption()
-                .setName('language')
+                .setName('from')
                 .setDescription('What language do you need help with?')),
             locale.languageList.reduce(
-                (prev,cur)=> prev.addChoices({name:cur.label,value:cur.val}
+                (prev,cur)=> prev.addChoices({name:cur.label,value:cur.code}
             ),
             new SlashCommandStringOption()
-                .setName('translation')
+                .setName('to')
                 .setDescription('What language are you familiar with?'))
         ]
     }],
@@ -75,6 +75,7 @@ let Commands = new Map<string,Command>([
 
 let threadMap = new Map<string,ThreadChannel>();
 let ignoredUsersMap = new Map<string,Set<string>>();
+let messageDeleteMap = new Map<string, Map<string,NodeJS.Timeout>>();
 
 async function join(interaction: CommandInteraction, user: GuildMember, bot: GuildMember){
     if(!user.voice.channel){ //User is not in channel
@@ -93,14 +94,15 @@ async function join(interaction: CommandInteraction, user: GuildMember, bot: Gui
         interaction.reply("Please use this command in a text channel!");
         return;
     }
-    locale.setSource(locale.countryCodeMap.get(interaction.options.getString('language') ?? locale.english.val)!);
-    locale.setTarget(locale.countryCodeMap.get(interaction.options.getString('translation') ?? locale.chinese.val)!);
+    locale.setSource(locale.countryCodeMap.get(interaction.options.getString('from') ?? locale.english.code)!);
+    locale.setTarget(locale.countryCodeMap.get(interaction.options.getString('to') ?? locale.chinese.code)!);
     const thread = await interaction.channel.threads.create({
         name: 'Translation',
         autoArchiveDuration: 60,
     });
     threadMap.set(user.guild.id,thread);
-
+    let messageDeletePool = new Map<string,NodeJS.Timeout>();
+    messageDeleteMap.set(user.guild.id, messageDeletePool);
     const guild = user.guild;
     const vc = user.voice.channel;
     const connection = joinVoiceChannel({
@@ -112,10 +114,8 @@ async function join(interaction: CommandInteraction, user: GuildMember, bot: Gui
     });
     connection.receiver.speaking.addListener('start',(userid=>{
         if(ignoredUsersMap.get(guild.id)?.has(userid)) return;
-        if(thread.archived) thread.setArchived(false);
-
+        thread.sendTyping().catch(()=>undefined);
         const username = vc.members.get(userid)?.displayName;
-        let message = thread.send(`${username} ${locale.speaking()}...`);
         //@ts-ignore
         const chunk = [];
         const opusStream = connection.receiver.subscribe(userid,{
@@ -132,30 +132,29 @@ async function join(interaction: CommandInteraction, user: GuildMember, bot: Gui
         opusDecoder.on('end', async()=>{
             //@ts-ignore
             let transcription = transcriptor(processVCAudio(Buffer.concat(chunk)));
-            let translation = '';
-            const msg = await message;
             if(transcription.length>0){
-                if(locale.srcLanguage != locale.tarLanguage){
+                let translation = '';
+                if(locale.srcLanguage !== locale.tarLanguage){
                     translation = await translate(transcription);
-                    msg.edit(locale.response(username,transcription,translation));
                 }
-                else msg.edit(locale.transcript(username,transcription));
-                thread.awaitMessages({filter:(res)=>res.reference?.messageId==msg.id,max:1,time:30000}).then(
+                let message = await thread.send(locale.response(username,transcription,translation));
+                thread.awaitMessages({filter:(res)=>res.reference?.messageId==message.id,max:1,time:30000}).then(
                     async (replies)=>{
                         if(replies.size > 0){
                             transcription = replies.first()!.content;
-                            if(locale.srcLanguage != locale.tarLanguage){
+                            if(locale.srcLanguage !== locale.tarLanguage){
                                 translation = await translate(transcription);
-                                msg.edit(locale.response(username,transcription,translation));
                             }
-                            else msg.edit(locale.transcript(username,transcription));
+                            message.edit(locale.response(username,transcription,translation));
+                            replies.first()?.delete().catch((e)=>console.error(e));
                         }
                     }
                 )
-            }else{
-                msg.delete();
+                messageDeletePool.set(message.id,setTimeout(()=>{
+                    message.delete();
+                    messageDeletePool.delete(message.id);
+                },60000));
             }
-            
         });
     }));
     interaction.reply(`Hello!\nI will translate from __${locale.srcLanguage}__ to __${locale.tarLanguage}__`);
@@ -170,11 +169,7 @@ function leave(interaction: CommandInteraction, user: GuildMember, bot: GuildMem
         interaction.reply('We are not in the same voice channel.');
         return;
     }
-    const connection = getVoiceConnection(user.guild.id);
-    connection?.disconnect();
-    threadMap.get(user.guild.id)?.delete();
-    threadMap.delete(user.guild.id);
-    ignoredUsersMap.get(user.guild.id)?.clear();
+    cleanUp(user.guild.id);
     //@ts-ignore
     interaction.reply({content:'Goodbye! Please rate how great my work is!', fetchReply:true}).then((message:Discord.Message) =>{
         message.react('1️⃣');
@@ -185,9 +180,19 @@ function leave(interaction: CommandInteraction, user: GuildMember, bot: GuildMem
     });
 }
 
+function cleanUp(guildID: string){
+    const connection = getVoiceConnection(guildID);
+    connection?.disconnect();
+    threadMap.get(guildID)?.delete();
+    threadMap.delete(guildID);
+    ignoredUsersMap.get(guildID)?.clear();
+    messageDeleteMap.get(guildID)?.forEach((val)=>clearTimeout(val));
+    messageDeleteMap.delete(guildID);
+}
+
 function changeLang(interaction: CommandInteraction, user: GuildMember, bot: GuildMember){
-    const cc = interaction.options.getString('language');
-    const tcc = interaction.options.getString('translation');
+    const cc = interaction.options.getString('from');
+    const tcc = interaction.options.getString('to');
     if(cc) {
         locale.setSource(locale.countryCodeMap.get(cc)!);
     }
@@ -201,7 +206,7 @@ function changeLang(interaction: CommandInteraction, user: GuildMember, bot: Gui
             .setPlaceholder('What language do you need help with?')
             .addOptions(locale.languageList.map(
                 (lang)=>{
-                    return {value:lang.val,label:lang.label};
+                    return {value:lang.code,label:lang.label};
                 })
             )
         ),
@@ -211,7 +216,7 @@ function changeLang(interaction: CommandInteraction, user: GuildMember, bot: Gui
             .setPlaceholder('What language are you familiar with?')
             .addOptions(locale.languageList.map(
                 (lang)=>{
-                    return {value:lang.val,label:lang.label};
+                    return {value:lang.code,label:lang.label};
                 })
             )
         )
@@ -248,4 +253,4 @@ function printHelp(interaction:CommandInteraction, user: GuildMember, bot: Guild
     interaction.reply({content:"foo",ephemeral:true});
 }
 
-export {Commands};
+export {Commands, cleanUp};

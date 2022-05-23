@@ -2,7 +2,7 @@ import dotenv from 'dotenv'
 dotenv.config();
 
 import Discord from 'discord.js'
-import { Commands } from './interactions';
+import { cleanUp, Commands } from './interactions';
 import * as locale from './localization';
 import { loadModels } from './transcription';
 
@@ -59,4 +59,13 @@ client.on('interactionCreate',interaction =>{
 			interaction.update(`I am translating from __${locale.srcLanguage}__ to __${locale.tarLanguage}__!`);
 		}
 	}
+});
+
+var exceptionOccured = false;
+
+process.on('SIGINT', function(){process.exit()});
+process.on('exit', function(code) {
+    if(exceptionOccured) console.log('Exception occured');
+    else console.log('Kill signal received');
+	client.guilds.cache.forEach((_,id)=> cleanUp(id));
 });

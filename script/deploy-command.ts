@@ -36,4 +36,3 @@ else{
 	.then(() => console.log('Successfully registered application commands.'))
 	.catch(console.error);
 }
-console.log("Commands registered successfully!")
