@@ -34,23 +34,9 @@ export function setTarget(lang:Language){
     tarLanguage = lang;
 }
 
-export function transcript(username:string|undefined, transcription: string){
-    if(srcLanguage === chinese){
-        transcription += `\n__${username}__: ${pinyin(transcription)}`
+export function romaji(text: string, lang: Language){
+    if(lang === chinese){
+        return pinyin(text);
     }
-    return `__${username}__: ${transcription}`; 
-}
-
-export function translate(username:string|undefined, translation: string){
-    if(tarLanguage === chinese){
-        translation += `> \n__${username}__: ${pinyin(translation)}`
-    }
-    return `> __${username}__: ${translation}`;
-}
-
-export function response(username:string|undefined, transcription:string, translation:string){
-    if(srcLanguage === tarLanguage){
-        return transcript(username, transcription);
-    }
-    return transcript(username,transcription)+'\n'+translate(username,translation);
+    return '\u200b';
 }

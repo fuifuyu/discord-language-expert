@@ -1,10 +1,10 @@
 import { SlashCommandBooleanOption, SlashCommandIntegerOption, SlashCommandStringOption, SlashCommandUserOption } from '@discordjs/builders';
 import { DiscordGatewayAdapterCreator, EndBehaviorType, getVoiceConnection, joinVoiceChannel } from '@discordjs/voice';
-import { CommandInteraction, Guild, GuildMember, MessageActionRow, MessageSelectMenu, TextChannel, ThreadChannel} from 'discord.js'
+import { CommandInteraction, GuildMember, MessageActionRow, MessageSelectMenu, TextChannel, ThreadChannel, Message, MessageEmbed} from 'discord.js'
 import * as locale from './localization';
 import prism from 'prism-media';
 import { processVCAudio, VC_SAMPLE_RATE } from './audio';
-import { partial, transcriptor } from './transcription';
+import { transcriptor } from './transcription';
 import { translate } from './translation';
 
 interface Command{
@@ -115,7 +115,6 @@ async function join(interaction: CommandInteraction, user: GuildMember, bot: Gui
     connection.receiver.speaking.addListener('start',(userid=>{
         if(ignoredUsersMap.get(guild.id)?.has(userid)) return;
         thread.sendTyping().catch(()=>undefined);
-        const username = vc.members.get(userid)?.displayName;
         //@ts-ignore
         const chunk = [];
         const opusStream = connection.receiver.subscribe(userid,{
@@ -131,21 +130,22 @@ async function join(interaction: CommandInteraction, user: GuildMember, bot: Gui
         })
         opusDecoder.on('end', async()=>{
             //@ts-ignore
-            let transcription = transcriptor(processVCAudio(Buffer.concat(chunk)));
-            if(transcription.length>0){
-                let translation = '';
+            let srcText = transcriptor(processVCAudio(Buffer.concat(chunk)));
+            if(srcText.length > 0){
+                let tarText = '';
                 if(locale.srcLanguage !== locale.tarLanguage){
-                    translation = await translate(transcription);
+                    tarText = await translate(srcText);
                 }
-                let message = await thread.send(locale.response(username,transcription,translation));
+                let message = await thread.send({embeds:[createEmbed(srcText,tarText,user)]});
                 thread.awaitMessages({filter:(res)=>res.reference?.messageId==message.id,max:1,time:30000}).then(
                     async (replies)=>{
                         if(replies.size > 0){
-                            transcription = replies.first()!.content;
+                            srcText = replies.first()!.content;
                             if(locale.srcLanguage !== locale.tarLanguage){
-                                translation = await translate(transcription);
+                                tarText = await translate(srcText);
                             }
-                            message.edit(locale.response(username,transcription,translation));
+                            createEmbed(srcText,tarText,user)
+                            message.edit({embeds:[createEmbed(srcText,tarText,user)]});
                             replies.first()?.delete().catch((e)=>console.error(e));
                         }
                     }
@@ -153,11 +153,27 @@ async function join(interaction: CommandInteraction, user: GuildMember, bot: Gui
                 messageDeletePool.set(message.id,setTimeout(()=>{
                     message.delete();
                     messageDeletePool.delete(message.id);
-                },60000));
+                }, 60000));
             }
         });
     }));
     interaction.reply(`Hello!\nI will translate from __${locale.srcLanguage}__ to __${locale.tarLanguage}__`);
+}
+
+function createEmbed(srcText:string, tarText:string,user: GuildMember){
+    let srcRomaji = locale.romaji(srcText,locale.srcLanguage);
+    let tarRomaji = locale.romaji(tarText,locale.tarLanguage);
+    
+    let embed = new MessageEmbed()
+        .setColor(user.displayHexColor)
+        .setThumbnail(user.displayAvatarURL())
+        .setAuthor({name: user.displayName, iconURL: user.displayAvatarURL()})
+        .setTitle(srcText);
+    if(srcRomaji.size > 0){
+        embed.setDescription(srcRomaji);
+    }
+    embed.addField(tarText,tarRomaji);
+    return embed;
 }
 
 function leave(interaction: CommandInteraction, user: GuildMember, bot: GuildMember){
@@ -169,21 +185,33 @@ function leave(interaction: CommandInteraction, user: GuildMember, bot: GuildMem
         interaction.reply('We are not in the same voice channel.');
         return;
     }
+    if(interaction.channel!.isThread()){
+        interaction.reply('Thank you!');
+        interaction.channel!.parent!.send({content:'Goodbye! Please rate how great my work is!'}).then((message:Message<boolean>) =>{
+            message.react('1️⃣');
+            message.react('2️⃣');
+            message.react('3️⃣');
+            message.react('4️⃣');
+            message.react('5️⃣');
+        })
+    }
+    else{
+        interaction.reply({content:'Goodbye! Please rate how great my work is!'}).then((message:any) =>{
+            if(message instanceof Message){
+                message.react('1️⃣');
+                message.react('2️⃣');
+                message.react('3️⃣');
+                message.react('4️⃣');
+            }
+        });
+    }
     cleanUp(user.guild.id);
-    //@ts-ignore
-    interaction.reply({content:'Goodbye! Please rate how great my work is!', fetchReply:true}).then((message:Discord.Message) =>{
-        message.react('1️⃣');
-        message.react('2️⃣');
-        message.react('3️⃣');
-        message.react('4️⃣');
-        message.react('5️⃣');
-    });
 }
 
-function cleanUp(guildID: string){
+async function cleanUp(guildID: string){
     const connection = getVoiceConnection(guildID);
     connection?.disconnect();
-    threadMap.get(guildID)?.delete();
+    await threadMap.get(guildID)?.delete();
     threadMap.delete(guildID);
     ignoredUsersMap.get(guildID)?.clear();
     messageDeleteMap.get(guildID)?.forEach((val)=>clearTimeout(val));
