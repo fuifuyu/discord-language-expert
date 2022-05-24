@@ -61,11 +61,28 @@ client.on('interactionCreate',interaction =>{
 	}
 });
 
-var exceptionOccured = false;
-
-process.on('SIGINT', function(){process.exit()});
-process.on('exit', function(code) {
-    if(exceptionOccured) console.log('Exception occured');
-    else console.log('Kill signal received');
-	client.guilds.cache.forEach((_,id)=> cleanUp(id));
+['SIGHUP', 'SIGINT', 'SIGQUIT', 'SIGILL', 'SIGTRAP', 'SIGABRT',
+    'SIGBUS', 'SIGFPE', 'SIGUSR1', 'SIGSEGV', 'SIGUSR2', 'SIGTERM'
+].forEach(function (sig) {
+    process.on(sig, async ()=>{
+        console.log(`Terminated by signal ${sig}`);
+		await cleanUpAll();
+    });
 });
+process.on('uncaughtException', async (e)=>{
+	console.error(e);
+	await cleanUpAll();
+});
+
+process.on('beforeExit',async()=>{
+	await cleanUpAll();
+});
+
+async function cleanUpAll(){
+	let promises: Promise<any>[] = [];
+	client.guilds.cache.forEach((_,id)=> {
+		promises.push(cleanUp(id));
+	});
+	await Promise.all(promises);
+	process.exit();
+}
