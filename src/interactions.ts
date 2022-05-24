@@ -168,11 +168,11 @@ function createEmbed(srcText:string, tarText:string,user: GuildMember){
         .setColor(user.displayHexColor)
         .setThumbnail(user.displayAvatarURL())
         .setAuthor({name: user.displayName, iconURL: user.displayAvatarURL()})
-        .setTitle(srcText);
-    if(srcRomaji.size > 0){
-        embed.setDescription(srcRomaji);
+        .setTitle(srcText)
+        .setDescription(srcRomaji);
+    if(tarText.length > 0){
+        embed.addField(tarText,tarRomaji);
     }
-    embed.addField(tarText,tarRomaji);
     return embed;
 }
 
